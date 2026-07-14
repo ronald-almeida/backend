@@ -41,10 +41,10 @@ const PORT = process.env.PORT || 3000;
 // do front-end. O front só informa se o order bump foi marcado
 // (true/false) - ele não manda "quanto custa".
 // ---------------------------------------------------------------
-const PRECO_PRODUTO_CENTAVOS = 69700; // R$ 697,00
-const PRECO_BUMP_CENTAVOS = 19700; // R$ 197,00
-const NOME_PRODUTO = 'Acesso Total Delegado de Polícia - 02 Anos';
-const NOME_BUMP = 'Acesso Total Vitalício - Delegado de Polícia 2.0';
+const PRECO_PRODUTO_CENTAVOS = 59700; // R$ 597,00
+const PRECO_BUMP_CENTAVOS = 9700; // R$ 97,00
+const NOME_PRODUTO = 'Acesso Total Delegado de Polícia - 01 Ano';
+const NOME_BUMP = 'Acesso Total Delegado de Polícia - 02 Anos';
 
 function validarCPF(cpf) {
   cpf = String(cpf).replace(/\D/g, '');
@@ -122,6 +122,9 @@ app.post('/api/create-pix', async (req, res) => {
         expiresInDays: 1,
       },
       externalRef: externalRef || `venda-${Date.now()}`,
+      // postbackUrl: avisa nosso backend quando o status mudar (ex: pago).
+      // Trocamos SEU-APP pela URL real do seu Web Service no Render.
+      postbackUrl: 'https://backend-dhvv.onrender.com/api/webhook',
     };
 
     const secretKey = process.env.PAYSHARK_SECRET_KEY;
@@ -221,6 +224,45 @@ app.get('/api/check-status', async (req, res) => {
   } catch (err) {
     console.error('Erro inesperado em /api/check-status:', err);
     return res.status(500).json({ error: 'Erro interno ao consultar status.' });
+  }
+});
+
+// ---------------------------------------------------------------
+// WEBHOOK: a PayShark chama essa rota automaticamente quando o status
+// de uma transação muda (ex: pix gerado -> pago). Configuramos isso
+// mandando "postbackUrl" na criação da transação (ver /api/create-pix).
+//
+// ATENÇÃO - itens a confirmar na doc de Webhooks da PayShark:
+//   1. Formato exato do body que eles enviam (assumindo que é o mesmo
+//      objeto de transação que a gente já viu em "Criar Venda" / "Buscar Venda").
+//   2. Como validar que a requisição realmente veio da PayShark
+//      (assinatura em header, token secreto, etc.) - ainda não implementado,
+//      então por enquanto QUALQUER UM pode chamar essa rota fingindo ser
+//      a PayShark. Não usar em produção sem essa validação.
+// ---------------------------------------------------------------
+app.post('/api/webhook', async (req, res) => {
+  try {
+    const evento = req.body;
+    console.log('Webhook recebido da PayShark:', JSON.stringify(evento));
+
+    // TODO: validar autenticidade da chamada (assinatura/token) antes de confiar nela
+
+    const status = (evento?.status || '').toLowerCase();
+    const transacaoId = evento?.id;
+
+    if (status === 'paid') {
+      // TODO: aqui é onde você libera o acesso do cliente de verdade:
+      // - marcar a compra como paga no seu banco de dados / planilha
+      // - enviar e-mail/mensagem com o acesso ao curso
+      // - notificar quem estiver acompanhando o pagamento em tempo real
+      console.log(`✅ Transação ${transacaoId} confirmada como paga.`);
+    }
+
+    // Sempre responder 200 rápido - a PayShark pode re-tentar se não receber OK
+    return res.status(200).json({ received: true });
+  } catch (err) {
+    console.error('Erro ao processar webhook:', err);
+    return res.status(500).json({ error: 'Erro ao processar webhook.' });
   }
 });
 
