@@ -15,12 +15,13 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Serve tudo que estiver dentro de "public" (landing page, imagens, etc.)
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve os arquivos estáticos direto da raiz do projeto (landing page,
+// pasta checkout-delta/, imagens, etc. - o que estiver ao lado do server.js)
+app.use(express.static(__dirname));
 
 // Rota amigável /checkout-delta -> abre o checkout-delta.html
 app.get('/checkout-delta', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'checkout-delta', 'checkout-delta.html'));
+  res.sendFile(path.join(__dirname, 'checkout-delta', 'checkout-delta.html'));
 });
 
 // Healthcheck em /api/health (não usa "/" pra não conflitar com a landing page)
