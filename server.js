@@ -1,0 +1,214 @@
+// server.js
+// Backend Express para rodar como "Web Service" no Render.
+// Diferente da Vercel, o Render não tem rotas automáticas por arquivo:
+// aqui é um servidor Node de verdade, que fica no ar o tempo todo.
+
+const express = require('express');
+const cors = require('cors');
+
+const app = express();
+app.use(express.json());
+
+// CORS: libera chamadas vindas do seu checkout (hotmartcurso.click).
+// Pode trocar '*' pelo domínio exato depois, pra travar mais a segurança:
+// app.use(cors({ origin: 'https://hotmartcurso.click' }));
+app.use(cors());
+
+const PORT = process.env.PORT || 3000;
+
+// ---------------------------------------------------------------
+// SEGURANÇA: os preços são fixos aqui no servidor, nunca recebidos
+// do front-end. O front só informa se o order bump foi marcado
+// (true/false) - ele não manda "quanto custa".
+// ---------------------------------------------------------------
+const PRECO_PRODUTO_CENTAVOS = 69700; // R$ 697,00
+const PRECO_BUMP_CENTAVOS = 19700; // R$ 197,00
+const NOME_PRODUTO = 'Acesso Total Delegado de Polícia - 02 Anos';
+const NOME_BUMP = 'Acesso Total Vitalício - Delegado de Polícia 2.0';
+
+function validarCPF(cpf) {
+  cpf = String(cpf).replace(/\D/g, '');
+  if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
+  let soma = 0,
+    resto;
+  for (let i = 1; i <= 9; i++) soma += parseInt(cpf[i - 1]) * (11 - i);
+  resto = (soma * 10) % 11;
+  if (resto === 10 || resto === 11) resto = 0;
+  if (resto !== parseInt(cpf[9])) return false;
+  soma = 0;
+  for (let i = 1; i <= 10; i++) soma += parseInt(cpf[i - 1]) * (12 - i);
+  resto = (soma * 10) % 11;
+  if (resto === 10 || resto === 11) resto = 0;
+  return resto === parseInt(cpf[10]);
+}
+
+// Healthcheck simples - útil pra confirmar que o serviço está de pé
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'pix-backend' });
+});
+
+app.post('/api/create-pix', async (req, res) => {
+  try {
+    const { nome, email, cpf, celular, bumpAtivo, externalRef } = req.body || {};
+
+    if (!nome || typeof nome !== 'string' || nome.trim().length < 3) {
+      return res.status(400).json({ error: 'Nome inválido.' });
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'E-mail inválido.' });
+    }
+    const cpfLimpo = String(cpf || '').replace(/\D/g, '');
+    if (!validarCPF(cpfLimpo)) {
+      return res.status(400).json({ error: 'CPF inválido.' });
+    }
+    const celularLimpo = String(celular || '').replace(/\D/g, '');
+    if (celularLimpo.length < 10) {
+      return res.status(400).json({ error: 'Celular inválido.' });
+    }
+
+    const bumpSelecionado = bumpAtivo === true;
+
+    const items = [
+      {
+        title: NOME_PRODUTO,
+        unitPrice: PRECO_PRODUTO_CENTAVOS,
+        quantity: 1,
+        tangible: false,
+      },
+    ];
+
+    let totalCentavos = PRECO_PRODUTO_CENTAVOS;
+
+    if (bumpSelecionado) {
+      items.push({
+        title: NOME_BUMP,
+        unitPrice: PRECO_BUMP_CENTAVOS,
+        quantity: 1,
+        tangible: false,
+      });
+      totalCentavos += PRECO_BUMP_CENTAVOS;
+    }
+
+    const payload = {
+      paymentMethod: 'pix',
+      currency: 'BRL',
+      amount: totalCentavos,
+      items,
+      customer: {
+        name: nome,
+        email,
+        phone: celularLimpo,
+        document: {
+          type: cpfLimpo.length === 11 ? 'cpf' : 'cnpj',
+          number: cpfLimpo,
+        },
+      },
+      pix: {
+        expiresInDays: 1,
+      },
+      externalRef: externalRef || `venda-${Date.now()}`,
+    };
+
+    const secretKey = process.env.PAYSHARK_SECRET_KEY;
+    if (!secretKey) {
+      console.error('PAYSHARK_SECRET_KEY não configurada nas variáveis de ambiente.');
+      return res.status(500).json({ error: 'Configuração do servidor incompleta.' });
+    }
+
+    const authHeader = 'Basic ' + Buffer.from(`${secretKey}:`).toString('base64');
+
+    const psResponse = await fetch('https://api.paysharkgateway.com.br/v1/transactions', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        authorization: authHeader,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await psResponse.json();
+
+    if (!psResponse.ok) {
+      console.error('Erro PayShark:', data);
+      return res.status(psResponse.status).json({
+        error: data?.message || data?.error || 'Erro ao criar transação na PayShark.',
+        details: data,
+      });
+    }
+
+    const qrcode = data?.pix?.qrcode || null;
+    const expirationDate = data?.pix?.expirationDate || null;
+    const end2EndId = data?.pix?.end2EndId || null;
+
+    if (!qrcode) {
+      console.error('Resposta da PayShark sem pix.qrcode:', data);
+      return res.status(502).json({
+        error: 'Transação criada, mas o Pix não retornou QR Code. Tente novamente.',
+        details: data,
+      });
+    }
+
+    return res.status(200).json({
+      id: data.id,
+      status: data.status,
+      amount: data.amount,
+      qrcode,
+      expirationDate,
+      end2EndId,
+    });
+  } catch (err) {
+    console.error('Erro inesperado em /api/create-pix:', err);
+    return res.status(500).json({ error: 'Erro interno ao gerar o Pix. Tente novamente.' });
+  }
+});
+
+app.get('/api/check-status', async (req, res) => {
+  const { id } = req.query;
+  if (!id) {
+    return res.status(400).json({ error: 'Parâmetro "id" é obrigatório.' });
+  }
+
+  const secretKey = process.env.PAYSHARK_SECRET_KEY;
+  if (!secretKey) {
+    console.error('PAYSHARK_SECRET_KEY não configurada.');
+    return res.status(500).json({ error: 'Configuração do servidor incompleta.' });
+  }
+
+  const authHeader = 'Basic ' + Buffer.from(`${secretKey}:`).toString('base64');
+
+  try {
+    const psResponse = await fetch(`https://api.paysharkgateway.com.br/v1/transactions/${id}`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        authorization: authHeader,
+      },
+    });
+
+    const data = await psResponse.json();
+
+    if (!psResponse.ok) {
+      console.error('Erro ao consultar status na PayShark:', data);
+      return res.status(psResponse.status).json({
+        error: data?.message || 'Erro ao consultar status da transação.',
+      });
+    }
+
+    const statusBruto = (data?.status || '').toLowerCase();
+    const pago = statusBruto === 'paid';
+
+    return res.status(200).json({
+      id: data.id,
+      statusBruto: data.status,
+      status: pago ? 'paid' : statusBruto,
+    });
+  } catch (err) {
+    console.error('Erro inesperado em /api/check-status:', err);
+    return res.status(500).json({ error: 'Erro interno ao consultar status.' });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
