@@ -24,6 +24,11 @@ app.get('/checkout-delta', (req, res) => {
   res.sendFile(path.join(__dirname, 'checkout-delta', 'checkout-delta.html'));
 });
 
+// Alias extra, caso alguém acesse com ".html" no final por engano
+app.get('/checkout-delta.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'checkout-delta', 'checkout-delta.html'));
+});
+
 // Healthcheck em /api/health (não usa "/" pra não conflitar com a landing page)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'pix-backend' });
