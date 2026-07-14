@@ -1,7 +1,7 @@
 {
-  "name": "pix-backend",
+  "name": "delta-checkout-backend",
   "version": "1.0.0",
-  "description": "Backend PIX (PayShark) para o checkout Dedicação Delta",
+  "description": "Landing page + checkout + backend PIX (PayShark) - Dedicação Delta",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
