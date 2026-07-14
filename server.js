@@ -1,18 +1,32 @@
 // server.js
-// Backend Express para rodar como "Web Service" no Render.
-// Diferente da Vercel, o Render não tem rotas automáticas por arquivo:
-// aqui é um servidor Node de verdade, que fica no ar o tempo todo.
+// Web Service único no Render que serve:
+//   - a landing page (public/index.html)              -> GET /
+//   - o checkout                                       -> GET /checkout-delta
+//   - o backend do Pix (PayShark)                       -> /api/create-pix, /api/check-status
+//
+// Tudo no mesmo domínio, então não existe problema de CORS entre
+// checkout e backend.
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
-
-// CORS: libera chamadas vindas do seu checkout (hotmartcurso.click).
-// Pode trocar '*' pelo domínio exato depois, pra travar mais a segurança:
-// app.use(cors({ origin: 'https://hotmartcurso.click' }));
 app.use(cors());
+
+// Serve tudo que estiver dentro de "public" (landing page, imagens, etc.)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Rota amigável /checkout-delta -> abre o checkout-delta.html
+app.get('/checkout-delta', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'checkout-delta', 'checkout-delta.html'));
+});
+
+// Healthcheck em /api/health (não usa "/" pra não conflitar com a landing page)
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', service: 'pix-backend' });
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -41,11 +55,6 @@ function validarCPF(cpf) {
   if (resto === 10 || resto === 11) resto = 0;
   return resto === parseInt(cpf[10]);
 }
-
-// Healthcheck simples - útil pra confirmar que o serviço está de pé
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'pix-backend' });
-});
 
 app.post('/api/create-pix', async (req, res) => {
   try {
